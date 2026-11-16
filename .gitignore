@@ -8,3 +8,5 @@ local.properties
 *.keystore
 *.p12
 .DS_Store
+.kotlin/
+dist/
