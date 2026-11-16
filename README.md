@@ -1,4 +1,4 @@
-# Car Audio Bridge (`marcopolo-aa-bridge`)
+# Car Audio Bridge (`aa-audio-bridge`)
 
 A lightweight, 100% offline Android companion app built for **Pixel 8 + Wireless Android Auto** (and Hyundai Ioniq 5 / `gen5w-suite` head units) so **Marco Polo** video messages and **Speechify** text-to-speech / AI voice reading play cleanly through the car speakers while keeping Wireless Android Auto connected.
 

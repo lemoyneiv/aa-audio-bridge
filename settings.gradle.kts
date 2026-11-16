@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "marcopolo-aa-bridge"
+rootProject.name = "aa-audio-bridge"
 include(":app")
