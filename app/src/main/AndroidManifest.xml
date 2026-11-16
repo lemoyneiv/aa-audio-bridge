@@ -10,6 +10,8 @@
 
     <queries>
         <package android:name="co.happybits.marcopolo" />
+        <package android:name="com.cliffweitzman.speechify2" />
+        <package android:name="com.cliffweitzman.speechify" />
         <package android:name="com.google.android.projection.gearhead" />
         <provider android:authorities="androidx.car.app.connection" />
     </queries>
@@ -42,6 +44,7 @@
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService" />
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
             </intent-filter>
         </service>
 
@@ -70,7 +73,7 @@
             android:name=".service.BridgeTileService"
             android:exported="true"
             android:icon="@drawable/ic_bridge_status"
-            android:label="Marco Polo Audio"
+            android:label="Car Audio Bridge"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

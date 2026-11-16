@@ -28,9 +28,9 @@ import com.google.android.material.materialswitch.MaterialSwitch
 import com.lemoyneiv.marcopolobridge.R
 import com.lemoyneiv.marcopolobridge.audio.AudioBridgeController
 import com.lemoyneiv.marcopolobridge.audio.BridgeRuntimeStatus
-import com.lemoyneiv.marcopolobridge.core.BridgePolicy
 import com.lemoyneiv.marcopolobridge.core.RoutingMode
 import com.lemoyneiv.marcopolobridge.core.ScoTiming
+import com.lemoyneiv.marcopolobridge.core.WatchedApp
 import com.lemoyneiv.marcopolobridge.service.MarcoPoloAccessibilityService
 import kotlinx.coroutines.launch
 
@@ -90,12 +90,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<MaterialButton>(R.id.btnOpenMarcoPolo).setOnClickListener {
-            val launch = packageManager.getLaunchIntentForPackage(BridgePolicy.PKG_MARCO_POLO)
-            if (launch != null) {
-                startActivity(launch)
-            } else {
-                Toast.makeText(this, "Marco Polo is not installed on this phone.", Toast.LENGTH_SHORT).show()
-            }
+            launchWatchedApp(com.lemoyneiv.marcopolobridge.core.WatchedApp.MARCO_POLO)
+        }
+
+        findViewById<MaterialButton>(R.id.btnOpenSpeechify).setOnClickListener {
+            launchWatchedApp(com.lemoyneiv.marcopolobridge.core.WatchedApp.SPEECHIFY)
         }
 
         findViewById<MaterialButton>(R.id.btnGrantPermissions).setOnClickListener {
@@ -132,6 +131,24 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        findViewById<MaterialSwitch>(R.id.switchEnableMarcoPolo).setOnCheckedChangeListener { _, checked ->
+            if (!updatingControlsFromState) {
+                controller.preferences.setEnableMarcoPolo(checked)
+            }
+        }
+
+        findViewById<MaterialSwitch>(R.id.switchEnableSpeechify).setOnCheckedChangeListener { _, checked ->
+            if (!updatingControlsFromState) {
+                controller.preferences.setEnableSpeechify(checked)
+            }
+        }
+
+        findViewById<MaterialSwitch>(R.id.switchKeepBackground).setOnCheckedChangeListener { _, checked ->
+            if (!updatingControlsFromState) {
+                controller.preferences.setKeepPlayingInBackground(checked)
+            }
+        }
+
         findViewById<MaterialSwitch>(R.id.switchOnlyWhenAa).setOnCheckedChangeListener { _, checked ->
             if (!updatingControlsFromState) {
                 controller.preferences.setOnlyWhenAndroidAutoConnected(checked)
@@ -165,6 +182,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun launchWatchedApp(app: com.lemoyneiv.marcopolobridge.core.WatchedApp) {
+        val launch = app.packageNames.firstNotNullOfOrNull { pkg ->
+            packageManager.getLaunchIntentForPackage(pkg)
+        }
+        if (launch != null) {
+            startActivity(launch)
+        } else {
+            Toast.makeText(
+                this,
+                "${app.displayName} is not installed on this phone.",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     private fun renderStatus(st: BridgeRuntimeStatus) {
         val txtHeadline = findViewById<TextView>(R.id.txtStatusHeadline)
         val txtDetails = findViewById<TextView>(R.id.txtStatusDetails)
@@ -181,7 +213,7 @@ class MainActivity : AppCompatActivity() {
         val btTarget = st.activeBtDeviceName ?: "None detected"
         val commCurrent = st.currentCommDeviceLabel ?: "Default"
         val a11yLabel = if (MarcoPoloAccessibilityService.isEnabledInSettings(this)) {
-            "Enabled"
+            "Enabled (Marco Polo & Speechify)"
         } else {
             "Not enabled yet"
         }
@@ -190,13 +222,16 @@ class MainActivity : AppCompatActivity() {
             appendLine("Android Auto: $aaLabel")
             appendLine("Target Car Bluetooth: $btTarget")
             appendLine("Active Voice Route: $commCurrent")
-            append("Marco Polo Auto-Detect: $a11yLabel")
+            append("App Auto-Detect: $a11yLabel")
         }
 
         btnToggle.text = if (active) "Release Car Audio" else "Hold Car Audio Now"
 
         updatingControlsFromState = true
         findViewById<MaterialSwitch>(R.id.switchAutoDetect).isChecked = st.config.autoDetectEnabled
+        findViewById<MaterialSwitch>(R.id.switchEnableMarcoPolo).isChecked = st.config.enableMarcoPolo
+        findViewById<MaterialSwitch>(R.id.switchEnableSpeechify).isChecked = st.config.enableSpeechify
+        findViewById<MaterialSwitch>(R.id.switchKeepBackground).isChecked = st.config.keepPlayingInBackground
         findViewById<MaterialSwitch>(R.id.switchOnlyWhenAa).isChecked = st.config.onlyWhenAndroidAutoConnected
         findViewById<MaterialSwitch>(R.id.switchResumeOnExit).isChecked = st.config.resumeMediaOnExit
 
@@ -237,8 +272,8 @@ class MainActivity : AppCompatActivity() {
 
         val a11yDone = MarcoPoloAccessibilityService.isEnabledInSettings(this)
         findViewById<TextView>(R.id.txtStepAccessibility).text =
-            if (a11yDone) "✓ 2. Auto-Detect Marco Polo (Enabled)"
-            else "2. Auto-Detect Marco Polo (Accessibility Needed)"
+            if (a11yDone) "✓ 2. Auto-Detect Marco Polo & Speechify (Enabled)"
+            else "2. Auto-Detect Marco Polo & Speechify (Accessibility Needed)"
 
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         val unrestricted = pm.isIgnoringBatteryOptimizations(packageName)

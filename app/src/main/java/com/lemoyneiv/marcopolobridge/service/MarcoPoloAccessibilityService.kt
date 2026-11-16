@@ -55,17 +55,39 @@ class MarcoPoloAccessibilityService : AccessibilityService() {
         val cls = event.className?.toString().orEmpty()
 
         // Ignore background Toasts or PopupWindows from other apps (e.g. Spotify/Maps toast)
-        // so they never falsely look like the user switched away from Marco Polo.
+        // so they never falsely look like the user switched away from Marco Polo or Speechify.
         if (cls.contains("Toast", ignoreCase = true) ||
             cls.contains("PopupWindow", ignoreCase = true)
         ) {
             return
         }
 
-        // Ignore our own notification action trampolines if Marco Polo is open underneath
+        // Ignore our own notification action trampolines if a watched app is open underneath
         if (pkg == packageName && cls.isEmpty()) return
 
+        // Speechify has an optional floating "Voice Keyboard" dictation bubble that can appear
+        // over other apps when tapping text fields. Only enter a watched app when the window
+        // is full-screen or a declared Activity in its manifest.
+        val watched = com.lemoyneiv.marcopolobridge.core.WatchedApp.fromPackage(pkg)
+        if (watched != null && controller.status.value.snapshot.foregroundApp != watched) {
+            if (!event.isFullScreen &&
+                !cls.contains("Activity", ignoreCase = true) &&
+                !isDeclaredActivity(pkg, cls)
+            ) {
+                return
+            }
+        }
+
         controller.onForegroundWindowChanged(pkg)
+    }
+
+    private fun isDeclaredActivity(pkg: String, cls: String): Boolean {
+        if (cls.isBlank()) return false
+        return runCatching {
+            val fqcn = if (cls.startsWith(".")) "$pkg$cls" else cls
+            packageManager.getActivityInfo(ComponentName(pkg, fqcn), 0)
+            true
+        }.getOrDefault(false)
     }
 
     override fun onInterrupt() {

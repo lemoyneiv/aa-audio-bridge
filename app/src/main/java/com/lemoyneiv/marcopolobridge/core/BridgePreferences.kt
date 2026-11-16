@@ -32,6 +32,9 @@ class BridgePreferences(context: Context) {
 
         return BridgeConfig(
             autoDetectEnabled = prefs.getBoolean(KEY_AUTO_DETECT, true),
+            enableMarcoPolo = prefs.getBoolean(KEY_ENABLE_MARCO_POLO, true),
+            enableSpeechify = prefs.getBoolean(KEY_ENABLE_SPEECHIFY, true),
+            keepPlayingInBackground = prefs.getBoolean(KEY_KEEP_BACKGROUND, true),
             onlyWhenAndroidAutoConnected = prefs.getBoolean(KEY_ONLY_WHEN_AA, true),
             routingMode = routingMode,
             scoTiming = scoTiming,
@@ -43,6 +46,18 @@ class BridgePreferences(context: Context) {
 
     fun setAutoDetectEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_AUTO_DETECT, enabled).apply()
+    }
+
+    fun setEnableMarcoPolo(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_ENABLE_MARCO_POLO, enabled).apply()
+    }
+
+    fun setEnableSpeechify(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_ENABLE_SPEECHIFY, enabled).apply()
+    }
+
+    fun setKeepPlayingInBackground(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_KEEP_BACKGROUND, enabled).apply()
     }
 
     fun setOnlyWhenAndroidAutoConnected(enabled: Boolean) {
@@ -68,6 +83,9 @@ class BridgePreferences(context: Context) {
     companion object {
         private const val PREFS_NAME = "marcopolo_bridge_prefs"
         private const val KEY_AUTO_DETECT = "auto_detect_enabled"
+        private const val KEY_ENABLE_MARCO_POLO = "enable_marco_polo"
+        private const val KEY_ENABLE_SPEECHIFY = "enable_speechify"
+        private const val KEY_KEEP_BACKGROUND = "keep_playing_in_background"
         private const val KEY_ONLY_WHEN_AA = "only_when_aa_connected"
         private const val KEY_ROUTING_MODE = "routing_mode"
         private const val KEY_SCO_TIMING = "sco_timing"
@@ -76,3 +94,4 @@ class BridgePreferences(context: Context) {
         private const val KEY_EXIT_GRACE_MS = "exit_grace_ms"
     }
 }
+

@@ -52,7 +52,7 @@ class SilentTrackPlayer {
 
             val attrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .setAllowedCapturePolicy(AudioAttributes.ALLOW_CAPTURE_BY_NONE)
                 .build()
 
@@ -108,7 +108,7 @@ class SilentTrackPlayer {
 
             val attrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .setAllowedCapturePolicy(AudioAttributes.ALLOW_CAPTURE_BY_NONE)
                 .build()
 
@@ -159,5 +159,13 @@ class SilentTrackPlayer {
 
     companion object {
         private const val TAG = "SilentTrackPlayer"
+
+        fun isOwnSilentTrack(attrs: AudioAttributes): Boolean {
+            return attrs.contentType == AudioAttributes.CONTENT_TYPE_SONIFICATION &&
+                attrs.allowedCapturePolicy == AudioAttributes.ALLOW_CAPTURE_BY_NONE &&
+                (attrs.usage == AudioAttributes.USAGE_VOICE_COMMUNICATION ||
+                    attrs.usage == AudioAttributes.USAGE_MEDIA)
+        }
     }
 }
+

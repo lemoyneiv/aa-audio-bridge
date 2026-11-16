@@ -20,6 +20,7 @@ import com.lemoyneiv.marcopolobridge.core.BridgePolicy
 import com.lemoyneiv.marcopolobridge.core.BridgePreferences
 import com.lemoyneiv.marcopolobridge.core.CommDeviceCandidate
 import com.lemoyneiv.marcopolobridge.core.PolicySnapshot
+import com.lemoyneiv.marcopolobridge.core.WatchedApp
 import com.lemoyneiv.marcopolobridge.service.BridgeMediaBrowserService
 import com.lemoyneiv.marcopolobridge.service.BridgeTileService
 import kotlinx.coroutines.CoroutineScope
@@ -58,6 +59,7 @@ class AudioBridgeController private constructor(context: Context) {
     }
 
     private var activeFocusRequest: AudioFocusRequest? = null
+    private var focusYieldedToApp: WatchedApp? = null
     private var commRouteEngaged: Boolean = false
     private var accessibilityServiceBound: Boolean = false
     private var wakeLock: PowerManager.WakeLock? = null
@@ -67,15 +69,33 @@ class AudioBridgeController private constructor(context: Context) {
 
     private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
-            // Another media app tried to claim permanent focus; if Marco Polo is still active,
-            // re-evaluate after a short settle delay so Spotify doesn't hijack between Polos.
-            mainHandler.postDelayed({
-                val snap = policy.evaluate(now())
-                if (snap.shouldHoldBridge) {
-                    abandonMediaFocus()
-                    requestMediaFocus(preferences.config.value)
+            abandonMediaFocus()
+            val snap = policy.evaluate(now())
+            when {
+                snap.manualHold -> {
+                    // User explicitly engaged Manual Hold -> keep holding media focus
+                    focusYieldedToApp = null
+                    mainHandler.postDelayed({
+                        if (policy.evaluate(now()).manualHold) {
+                            requestMediaFocus(preferences.config.value)
+                        }
+                    }, 300L)
                 }
-            }, 300L)
+                snap.foregroundApp != null -> {
+                    // Speechify or Marco Polo is on screen and claimed AUDIOFOCUS_GAIN itself ->
+                    // remember this so subsequent reconcile() calls do NOT steal focus back from it,
+                    // while keeping our Car Bluetooth communication route active.
+                    focusYieldedToApp = snap.foregroundApp
+                    Log.i(TAG, "${snap.foregroundApp.displayName} claimed media focus in foreground")
+                }
+                else -> {
+                    // Bridge was only holding for background continuation and user started another
+                    // media app (e.g. tapped Play on Spotify on Android Auto) -> yield cleanly!
+                    focusYieldedToApp = null
+                    policy.onMediaAudioFocusLost(now())
+                    reconcile()
+                }
+            }
         }
     }
 
@@ -212,14 +232,20 @@ class AudioBridgeController private constructor(context: Context) {
         val snap = policy.evaluate(t)
 
         mainHandler.removeCallbacks(graceReconcileRunnable)
-        if (snap.inExitGrace) {
-            mainHandler.postDelayed(graceReconcileRunnable, cfg.exitGraceMs + 60L)
+        if (snap.graceRemainingMs > 0L) {
+            mainHandler.postDelayed(graceReconcileRunnable, snap.graceRemainingMs + 60L)
         }
 
         if (snap.shouldHoldBridge) {
+            if (snap.manualHold || (focusYieldedToApp != null && snap.activeApp != focusYieldedToApp)) {
+                focusYieldedToApp = null
+            }
             acquireWakeLockIfNeeded()
-            requestMediaFocusIfNeeded(cfg)
+            if (focusYieldedToApp == null) {
+                requestMediaFocusIfNeeded(cfg)
+            }
         } else {
+            focusYieldedToApp = null
             mainHandler.removeCallbacks(followUpRouteRunnable)
             releaseBtCommunicationRoute()
             silentPlayer.stopAll()
@@ -240,7 +266,12 @@ class AudioBridgeController private constructor(context: Context) {
             }
         }
 
-        BridgeMediaBrowserService.syncWithBridgeState(appContext, snap.shouldHoldBridge, snap.reason)
+        BridgeMediaBrowserService.syncWithBridgeState(
+            appContext,
+            snap.shouldHoldBridge,
+            snap.activeApp?.displayName,
+            snap.reason
+        )
         BridgeTileService.requestTileUpdate(appContext)
         publishStatus()
     }
@@ -328,21 +359,24 @@ class AudioBridgeController private constructor(context: Context) {
     }
 
     private fun hasExternalRelevantPlayback(configs: List<AudioPlaybackConfiguration>): Boolean {
-        var voiceCount = 0
+        var speechOrCommCount = 0
         var mediaCount = 0
         for (cfg in configs) {
-            when (cfg.audioAttributes.usage) {
+            val attrs = cfg.audioAttributes
+            if (SilentTrackPlayer.isOwnSilentTrack(attrs)) continue
+            when (attrs.usage) {
                 AudioAttributes.USAGE_VOICE_COMMUNICATION,
-                AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING -> voiceCount++
+                AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING,
+                AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY,
+                AudioAttributes.USAGE_ASSISTANT -> speechOrCommCount++
                 AudioAttributes.USAGE_MEDIA,
                 AudioAttributes.USAGE_UNKNOWN -> mediaCount++
             }
         }
-        val ownVoice = if (silentPlayer.isVoicePrimerPlaying) 1 else 0
-        val ownMedia = if (silentPlayer.isMediaKeepalivePlaying) 1 else 0
-        val externalVoice = (voiceCount - ownVoice) > 0
-        val externalMedia = (mediaCount - ownMedia) > 0
-        return externalVoice || (policy.evaluate(now()).marcoPoloForeground && externalMedia)
+        if (speechOrCommCount > 0) return true
+        val snap = policy.evaluate(now())
+        val watchingMediaForTarget = snap.targetAppForeground || snap.backgroundLatchedApp != null
+        return watchingMediaForTarget && mediaCount > 0
     }
 
     private fun resolveTargetBtDevice(): Pair<CommDeviceCandidate, AudioDeviceInfo>? {
@@ -404,7 +438,7 @@ class AudioBridgeController private constructor(context: Context) {
                 "MarcoPoloBridge:AudioSession"
             ).apply {
                 setReferenceCounted(false)
-                acquire(15 * 60 * 1000L)
+                acquire(2 * 60 * 60 * 1000L) // Up to 2 hours for long Speechify audiobooks/articles
             }
             wakeLock = wl
         }

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Marco Polo Car Bridge</string>
-    <string name="accessibility_service_description">Detects when Marco Polo opens in the foreground while Android Auto is connected so car audio automatically pauses music and routes Marco Polo messages through your car speakers. Never reads screen text or personal content.</string>
+    <string name="app_name">Car Audio Bridge</string>
+    <string name="accessibility_service_description">Detects when Marco Polo or Speechify opens while Android Auto is connected so car audio automatically pauses music and routes speech/messages through your car speakers. Never reads screen text or personal content.</string>
 </resources>
+

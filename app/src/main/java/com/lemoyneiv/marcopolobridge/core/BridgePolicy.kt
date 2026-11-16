@@ -4,17 +4,17 @@ import java.util.Locale
 
 /**
  * Pure Kotlin policy & state machine deciding when to hold Android Auto media focus
- * and when to route communication audio to the car's Bluetooth hands-free channel.
+ * and when to route speech/communication audio to the car's Bluetooth hands-free channel
+ * for Marco Polo and Speechify.
  *
  * Free of Android framework imports so all foreground transitions, transient overlays,
- * screen-off playback continuity, cellular call yields, and speakerphone anti-hijack
- * rate limits are deterministically unit-tested on the host JVM.
+ * screen-off & background TTS reading continuity, cellular call yields, and speakerphone
+ * anti-hijack rate limits are deterministically unit-tested on the host JVM.
  */
-class BridgePolicy(
-    private val targetPackages: Set<String> = setOf(PKG_MARCO_POLO)
-) {
+class BridgePolicy {
     companion object {
         const val PKG_MARCO_POLO = "co.happybits.marcopolo"
+        const val PKG_SPEECHIFY = "com.cliffweitzman.speechify2"
 
         // Mirrors android.media.AudioManager mode constants
         const val AUDIO_MODE_NORMAL = 0
@@ -46,12 +46,14 @@ class BridgePolicy(
     }
 
     private var config: BridgeConfig = BridgeConfig()
-    private var marcoPoloInForeground: Boolean = false
+    private var foregroundApp: WatchedApp? = null
+    private var backgroundLatchedApp: WatchedApp? = null
+    private var graceApp: WatchedApp? = null
     private var manualHoldActive: Boolean = false
     private var suppressedForCurrentVisit: Boolean = false
     private var aaConnected: Boolean = false
     private var screenInteractive: Boolean = true
-    private var externalVoiceOrMediaPlaying: Boolean = false
+    private var externalAudioPlaying: Boolean = false
     private var audioMode: Int = AUDIO_MODE_NORMAL
     private var exitGraceUntilMs: Long = 0L
 
@@ -61,6 +63,15 @@ class BridgePolicy(
     @Synchronized
     fun updateConfig(newConfig: BridgeConfig, nowMs: Long): PolicySnapshot {
         config = newConfig
+        val bg = backgroundLatchedApp
+        if (bg != null && (!newConfig.keepPlayingInBackground || !newConfig.isAppEnabled(bg))) {
+            backgroundLatchedApp = null
+        }
+        val ga = graceApp
+        if (ga != null && !newConfig.isAppEnabled(ga)) {
+            graceApp = null
+            exitGraceUntilMs = 0L
+        }
         return evaluate(nowMs)
     }
 
@@ -68,6 +79,8 @@ class BridgePolicy(
     fun onAndroidAutoConnectionChanged(connected: Boolean, nowMs: Long): PolicySnapshot {
         aaConnected = connected
         if (!connected && config.onlyWhenAndroidAutoConnected && !manualHoldActive) {
+            backgroundLatchedApp = null
+            graceApp = null
             exitGraceUntilMs = 0L
         }
         return evaluate(nowMs)
@@ -77,10 +90,12 @@ class BridgePolicy(
     fun onScreenInteractiveChanged(interactive: Boolean, nowMs: Long): PolicySnapshot {
         val wasHolding = computeAutoHold(nowMs)
         screenInteractive = interactive
-        if (!interactive && marcoPoloInForeground && wasHolding && !externalVoiceOrMediaPlaying) {
+        val fg = foregroundApp
+        if (!interactive && fg != null && wasHolding && !externalAudioPlaying) {
             // Give a grace period when locking screen if nothing is actively playing;
-            // if a Polo IS actively playing when screen turns off, externalVoiceOrMediaPlaying
-            // keeps the session alive until the message finishes!
+            // if a Polo or Speechify article IS actively playing when screen turns off,
+            // externalAudioPlaying keeps the session alive until playback finishes!
+            graceApp = fg
             exitGraceUntilMs = maxOf(exitGraceUntilMs, nowMs + config.exitGraceMs)
         }
         return evaluate(nowMs)
@@ -91,23 +106,42 @@ class BridgePolicy(
         if (isTransientOverlay(packageName)) {
             return evaluate(nowMs)
         }
-        val pkg = packageName!!.trim()
-        val isTarget = targetPackages.contains(pkg)
-        if (isTarget) {
-            if (!marcoPoloInForeground) {
-                marcoPoloInForeground = true
+        val matchedApp = WatchedApp.fromPackage(packageName)
+        if (matchedApp != null) {
+            if (foregroundApp != matchedApp) {
+                foregroundApp = matchedApp
+                backgroundLatchedApp = null
+                graceApp = null
+                suppressedForCurrentVisit = false
                 exitGraceUntilMs = 0L
                 resetReassertionBudget()
             }
         } else {
-            if (marcoPoloInForeground) {
+            val prevFg = foregroundApp
+            if (prevFg != null) {
                 val wasAutoHolding = computeAutoHold(nowMs)
-                marcoPoloInForeground = false
+                foregroundApp = null
                 suppressedForCurrentVisit = false
                 resetReassertionBudget()
-                if (wasAutoHolding && config.exitGraceMs > 0L) {
-                    exitGraceUntilMs = nowMs + config.exitGraceMs
+                if (wasAutoHolding) {
+                    if (externalAudioPlaying && config.keepPlayingInBackground) {
+                        // Speechify (or Marco Polo) is actively playing when the user swipes
+                        // Home or switches to Maps -> latch in background until audio stops!
+                        backgroundLatchedApp = prevFg
+                        graceApp = prevFg
+                        exitGraceUntilMs = 0L
+                    } else if (config.exitGraceMs > 0L) {
+                        backgroundLatchedApp = null
+                        graceApp = prevFg
+                        exitGraceUntilMs = nowMs + config.exitGraceMs
+                    } else {
+                        backgroundLatchedApp = null
+                        graceApp = null
+                        exitGraceUntilMs = 0L
+                    }
                 } else {
+                    backgroundLatchedApp = null
+                    graceApp = null
                     exitGraceUntilMs = 0L
                 }
             }
@@ -117,15 +151,46 @@ class BridgePolicy(
 
     @Synchronized
     fun onExternalAudioActiveChanged(active: Boolean, nowMs: Long): PolicySnapshot {
-        val previouslyActive = externalVoiceOrMediaPlaying
-        externalVoiceOrMediaPlaying = active
-        if (previouslyActive && !active && marcoPoloInForeground && !screenInteractive) {
-            // Message finished playing while screen was off -> enter exit grace
-            exitGraceUntilMs = nowMs + config.exitGraceMs
+        val previouslyActive = externalAudioPlaying
+        externalAudioPlaying = active
+
+        if (active) {
+            if (!previouslyActive) {
+                // New clip or TTS paragraph started -> allow fresh route re-assertion
+                routeBackoffActive = false
+            }
+            if (backgroundLatchedApp != null || foregroundApp != null) {
+                // Active audio resumed within any paragraph gap -> clear pending grace expiry
+                exitGraceUntilMs = 0L
+            }
+        } else if (previouslyActive) {
+            val fg = foregroundApp
+            val bg = backgroundLatchedApp
+            if (bg != null) {
+                // Background Speechify/Marco Polo stream paused or hit a paragraph gap ->
+                // hold through playbackGapGraceMs before releasing Car Bluetooth
+                graceApp = bg
+                exitGraceUntilMs = nowMs + config.playbackGapGraceMs
+            } else if (fg != null && !screenInteractive && config.isAppEnabled(fg)) {
+                // Message or chapter finished while screen was off -> enter playback gap grace
+                graceApp = fg
+                exitGraceUntilMs = nowMs + config.playbackGapGraceMs
+            }
         }
-        if (active && !previouslyActive) {
-            // New Polo clip started -> allow fresh route re-assertion if Marco Polo flipped speakerphone
-            routeBackoffActive = false
+        return evaluate(nowMs)
+    }
+
+    /**
+     * Called when another media app (e.g. user tapping Play on Spotify on the Android Auto
+     * screen) claims permanent `AUDIOFOCUS_GAIN`. If we were only holding for background
+     * continuation (not actively inside Marco Polo / Speechify on screen), yield immediately.
+     */
+    @Synchronized
+    fun onMediaAudioFocusLost(nowMs: Long): PolicySnapshot {
+        if (foregroundApp == null && !manualHoldActive) {
+            backgroundLatchedApp = null
+            graceApp = null
+            exitGraceUntilMs = 0L
         }
         return evaluate(nowMs)
     }
@@ -142,11 +207,15 @@ class BridgePolicy(
         if (enabled) {
             suppressedForCurrentVisit = false
             resetReassertionBudget()
-        } else if (marcoPoloInForeground) {
-            // User explicitly tapped Release while inside Marco Polo -> stay out of the way
-            // for the rest of this Marco Polo foreground visit.
-            suppressedForCurrentVisit = true
+        } else {
+            backgroundLatchedApp = null
+            graceApp = null
             exitGraceUntilMs = 0L
+            if (foregroundApp != null) {
+                // User explicitly tapped Release while inside Marco Polo / Speechify ->
+                // stay out of the way for the rest of this foreground visit.
+                suppressedForCurrentVisit = true
+            }
         }
         return evaluate(nowMs)
     }
@@ -201,7 +270,7 @@ class BridgePolicy(
 
     /**
      * Determines whether we should re-assert setMode(MODE_IN_COMMUNICATION) +
-     * setCommunicationDevice(targetBt) after Marco Polo attempts to switch back to speakerphone.
+     * setCommunicationDevice(targetBt) after an app attempts to switch back to speakerphone.
      */
     @Synchronized
     fun shouldReassertBtRoute(
@@ -234,46 +303,89 @@ class BridgePolicy(
         return true
     }
 
+    private fun pruneExpiredBackgroundState(nowMs: Long) {
+        if (backgroundLatchedApp != null && !externalAudioPlaying && nowMs >= exitGraceUntilMs) {
+            backgroundLatchedApp = null
+        }
+        if (exitGraceUntilMs > 0L && nowMs >= exitGraceUntilMs) {
+            exitGraceUntilMs = 0L
+            if (foregroundApp == null && backgroundLatchedApp == null) {
+                graceApp = null
+            }
+        }
+    }
+
     private fun computeAutoHold(nowMs: Long): Boolean {
+        pruneExpiredBackgroundState(nowMs)
         if (!config.autoDetectEnabled) return false
         if (suppressedForCurrentVisit) return false
         if (config.onlyWhenAndroidAutoConnected && !aaConnected) return false
 
-        if (marcoPoloInForeground) {
-            if (screenInteractive || externalVoiceOrMediaPlaying) {
+        val fg = foregroundApp
+        if (fg != null && config.isAppEnabled(fg)) {
+            if (screenInteractive || externalAudioPlaying) {
                 return true
             }
         }
+
+        val bg = backgroundLatchedApp
+        if (bg != null && config.keepPlayingInBackground && config.isAppEnabled(bg)) {
+            if (externalAudioPlaying || nowMs < exitGraceUntilMs) {
+                return true
+            }
+        }
+
         return nowMs < exitGraceUntilMs
     }
 
     @Synchronized
     fun evaluate(nowMs: Long): PolicySnapshot {
         val inCall = audioMode == AUDIO_MODE_IN_CALL || audioMode == AUDIO_MODE_RINGTONE
-        val inGrace = !marcoPoloInForeground && nowMs < exitGraceUntilMs
         val autoHold = computeAutoHold(nowMs)
+        val fg = foregroundApp?.takeIf { config.isAppEnabled(it) }
+        val bg = backgroundLatchedApp?.takeIf { config.isAppEnabled(it) }
+        val graceRemaining = maxOf(0L, exitGraceUntilMs - nowMs)
+        val inGrace = graceRemaining > 0L
         val shouldHold = !inCall && (manualHoldActive || autoHold)
+
+        val activeApp = when {
+            !shouldHold -> null
+            fg != null -> fg
+            bg != null -> bg
+            inGrace -> graceApp
+            else -> null
+        }
 
         val shouldBtComm = shouldHold &&
             config.routingMode == RoutingMode.SMART_AUTO &&
             (manualHoldActive ||
                 config.scoTiming == ScoTiming.ON_FOREGROUND ||
-                externalVoiceOrMediaPlaying)
+                externalAudioPlaying)
 
         val shouldSilentMedia = shouldHold &&
             (config.routingMode == RoutingMode.AA_MEDIA_HOLD_ONLY || !shouldBtComm)
 
+        val appLabel = activeApp?.displayName ?: foregroundApp?.displayName ?: "App"
         val reason = when {
             inCall -> "Paused for cellular phone call"
             manualHoldActive -> "Manual hold active"
-            autoHold && inGrace -> "Holding briefly after leaving Marco Polo"
-            autoHold && !screenInteractive && externalVoiceOrMediaPlaying ->
-                "Marco Polo playing with screen off"
-            autoHold -> "Marco Polo active"
-            marcoPoloInForeground && suppressedForCurrentVisit ->
-                "Released manually for current Marco Polo session"
-            marcoPoloInForeground && config.onlyWhenAndroidAutoConnected && !aaConnected ->
-                "Marco Polo open (waiting for Android Auto)"
+            autoHold && bg != null && externalAudioPlaying ->
+                "${bg.displayName} playing in background"
+            autoHold && bg != null && inGrace ->
+                "Holding briefly for ${bg.displayName}"
+            autoHold && fg == null && inGrace ->
+                "Holding briefly after leaving ${graceApp?.displayName ?: "app"}"
+            autoHold && !screenInteractive && externalAudioPlaying ->
+                "$appLabel playing with screen off"
+            autoHold && inGrace && !screenInteractive ->
+                "Holding briefly after $appLabel finished"
+            autoHold -> "$appLabel active"
+            foregroundApp != null && !config.isAppEnabled(foregroundApp!!) ->
+                "${foregroundApp!!.displayName} open (auto-detect off for this app)"
+            foregroundApp != null && suppressedForCurrentVisit ->
+                "Released manually for current $appLabel session"
+            foregroundApp != null && config.onlyWhenAndroidAutoConnected && !aaConnected ->
+                "$appLabel open (waiting for Android Auto)"
             aaConnected -> "Armed — Android Auto connected"
             else -> "Idle"
         }
@@ -282,11 +394,15 @@ class BridgePolicy(
             shouldHoldBridge = shouldHold,
             shouldEngageBtCommRoute = shouldBtComm,
             shouldPlaySilentMediaKeepalive = shouldSilentMedia,
-            marcoPoloForeground = marcoPoloInForeground,
+            activeApp = activeApp,
+            foregroundApp = foregroundApp,
+            backgroundLatchedApp = backgroundLatchedApp,
             manualHold = manualHoldActive,
             inExitGrace = inGrace,
+            graceRemainingMs = graceRemaining,
             yieldingToPhoneCall = inCall,
             reason = reason
         )
     }
 }
+

@@ -15,7 +15,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Marco Polo Car Bridge"
+            android:text="Car Audio Bridge"
             android:textAppearance="?attr/textAppearanceHeadlineSmall"
             android:textStyle="bold" />
 
@@ -24,7 +24,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:layout_marginBottom="16dp"
-            android:text="Keeps Wireless Android Auto connected while pausing music and routing Marco Polo audio through your car speakers."
+            android:text="Keeps Wireless Android Auto connected while pausing music and routing Marco Polo &amp; Speechify audio through your car speakers."
             android:textAppearance="?attr/textAppearanceBodyMedium" />
 
         <!-- Live Status Card -->
@@ -58,29 +58,38 @@
                     android:text="Android Auto: Not connected"
                     android:textAppearance="?attr/textAppearanceBodyMedium" />
 
-                <LinearLayout
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnManualToggle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="14dp"
+                    android:text="Hold Car Audio Now" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
                     android:orientation="horizontal">
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnManualToggle"
+                        android:id="@+id/btnOpenMarcoPolo"
+                        style="?attr/materialButtonOutlinedStyle"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="Hold Car Audio Now" />
+                        android:text="Open Marco Polo" />
 
                     <Space
                         android:layout_width="8dp"
                         android:layout_height="1dp" />
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnOpenMarcoPolo"
+                        android:id="@+id/btnOpenSpeechify"
                         style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="wrap_content"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:text="Open Marco Polo" />
+                        android:layout_weight="1"
+                        android:text="Open Speechify" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
@@ -120,7 +129,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="Allows routing Marco Polo audio to your car's hands-free Bluetooth channel."
+                    android:text="Allows routing Marco Polo and Speechify audio to your car's hands-free Bluetooth channel."
                     android:textAppearance="?attr/textAppearanceBodySmall" />
 
                 <com.google.android.material.button.MaterialButton
@@ -137,7 +146,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:text="2. Auto-Detect Marco Polo (Accessibility)"
+                    android:text="2. Auto-Detect Apps (Accessibility)"
                     android:textAppearance="?attr/textAppearanceBodyLarge"
                     android:textStyle="bold" />
 
@@ -243,7 +252,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Routing &amp; Behavior"
+                    android:text="Watched Apps &amp; Behavior"
                     android:textAppearance="?attr/textAppearanceTitleMedium"
                     android:textStyle="bold" />
 
@@ -252,7 +261,25 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="Automatically activate when Marco Polo opens" />
+                    android:text="Automatically activate when watched apps open" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchEnableMarcoPolo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Watch Marco Polo" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchEnableSpeechify"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Watch Speechify" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchKeepBackground"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Keep car audio while Speechify / Marco Polo plays in background" />
 
                 <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/switchOnlyWhenAa"
@@ -311,13 +338,13 @@
                         android:id="@+id/rbTimingForeground"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Immediately when Marco Polo opens (No clipped start)" />
+                        android:text="Immediately when app opens (No clipped start)" />
 
                     <RadioButton
                         android:id="@+id/rbTimingPlayback"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Only while Marco Polo audio is actively playing" />
+                        android:text="Only while audio is actively playing" />
                 </RadioGroup>
 
                 <TextView
@@ -339,3 +366,4 @@
         </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>
+

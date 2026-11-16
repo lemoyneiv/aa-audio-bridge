@@ -49,6 +49,18 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
             controller.setManualHold(false)
         }
 
+        override fun onPlayFromSearch(query: String?, extras: Bundle?) {
+            val q = query.orEmpty()
+            if (q.contains("release", ignoreCase = true) ||
+                q.contains("stop", ignoreCase = true) ||
+                q.contains("resume", ignoreCase = true)
+            ) {
+                controller.setManualHold(false)
+            } else {
+                controller.setManualHold(true)
+            }
+        }
+
         override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
             when (mediaId) {
                 MEDIA_ID_HOLD -> controller.setManualHold(true)
@@ -85,7 +97,11 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         sessionToken = mediaSession.sessionToken
 
         val st = controller.status.value
-        updateMediaSession(st.snapshot.shouldHoldBridge, st.snapshot.reason)
+        updateMediaSession(
+            st.snapshot.shouldHoldBridge,
+            st.snapshot.activeApp?.displayName,
+            st.snapshot.reason
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -99,18 +115,19 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
             }
             ACTION_SYNC_STATE -> {
                 val active = intent.getBooleanExtra(EXTRA_ACTIVE, false)
-                val reason = intent.getStringExtra(EXTRA_REASON) ?: "Marco Polo Audio Bridge"
-                applyForegroundAndSession(active, reason)
+                val appName = intent.getStringExtra(EXTRA_APP_NAME)
+                val reason = intent.getStringExtra(EXTRA_REASON) ?: "Car Audio Bridge"
+                applyForegroundAndSession(active, appName, reason)
             }
         }
         return START_STICKY
     }
 
-    private fun applyForegroundAndSession(active: Boolean, reason: String) {
-        updateMediaSession(active, reason)
+    private fun applyForegroundAndSession(active: Boolean, appName: String?, reason: String) {
+        updateMediaSession(active, appName, reason)
         notifyChildrenChanged(ROOT_ID)
         if (active) {
-            val notification = buildNotification(reason)
+            val notification = buildNotification(appName, reason)
             runCatching {
                 ServiceCompat.startForeground(
                     this,
@@ -133,13 +150,14 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         }
     }
 
-    private fun updateMediaSession(active: Boolean, subtitle: String) {
+    private fun updateMediaSession(active: Boolean, appName: String?, subtitle: String) {
         val playbackState = PlaybackStateCompat.Builder()
             .setActions(
                 PlaybackStateCompat.ACTION_PLAY or
                     PlaybackStateCompat.ACTION_PAUSE or
                     PlaybackStateCompat.ACTION_PLAY_PAUSE or
-                    PlaybackStateCompat.ACTION_STOP
+                    PlaybackStateCompat.ACTION_STOP or
+                    PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
             )
             .setState(
                 if (active) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,
@@ -150,16 +168,21 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         mediaSession.setPlaybackState(playbackState)
 
         val btName = controller.status.value.activeBtDeviceName ?: "Car Bluetooth"
+        val activeTitle = if (!appName.isNullOrBlank()) {
+            "$appName Audio Active"
+        } else {
+            "Car Audio Hold Active"
+        }
         val metadata = MediaMetadataCompat.Builder()
             .putString(
                 MediaMetadataCompat.METADATA_KEY_TITLE,
-                if (active) "Marco Polo Audio Active" else "Marco Polo Bridge (Idle)"
+                if (active) activeTitle else "Car Audio Bridge (Idle)"
             )
             .putString(
                 MediaMetadataCompat.METADATA_KEY_ARTIST,
                 if (active) "Routing to $btName • AA Music Paused" else subtitle
             )
-            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, "Marco Polo AA Bridge")
+            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, "Marco Polo & Speechify Bridge")
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, -1L)
             .build()
         mediaSession.setMetadata(metadata)
@@ -188,13 +211,14 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         }
         val st = controller.status.value
         val active = st.snapshot.shouldHoldBridge
+        val appLabel = st.snapshot.activeApp?.displayName ?: "Marco Polo / Speechify"
         val mode = st.config.routingMode
 
         val items = mutableListOf(
             buildPlayableItem(
                 id = MEDIA_ID_HOLD,
-                title = if (active) "Audio Hold Active (Marco Polo)" else "Hold Car Audio for Marco Polo",
-                subtitle = "Pauses Android Auto music & routes Marco Polo to car speakers"
+                title = if (active) "Audio Hold Active ($appLabel)" else "Hold Car Audio Now",
+                subtitle = "Pauses Android Auto music & routes Marco Polo / Speechify to car speakers"
             ),
             buildPlayableItem(
                 id = MEDIA_ID_RELEASE,
@@ -236,7 +260,7 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         return MediaBrowserCompat.MediaItem(desc, MediaBrowserCompat.MediaItem.FLAG_PLAYABLE)
     }
 
-    private fun buildNotification(reason: String): Notification {
+    private fun buildNotification(appName: String?, reason: String): Notification {
         val openAppIntent = PendingIntent.getActivity(
             this,
             1,
@@ -254,9 +278,14 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         )
 
         val btLabel = controller.status.value.activeBtDeviceName ?: "Car Speakers"
+        val title = if (!appName.isNullOrBlank()) {
+            "$appName Car Audio Active"
+        } else {
+            "Car Audio Bridge Active"
+        }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_bridge_status)
-            .setContentTitle("Marco Polo Car Audio Active")
+            .setContentTitle(title)
             .setContentText("$btLabel • $reason")
             .setContentIntent(openAppIntent)
             .setOngoing(true)
@@ -280,10 +309,10 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Marco Polo Car Audio Bridge",
+            "Car Audio Bridge",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Shows when car audio is being held for Marco Polo"
+            description = "Shows when car audio is being held for Marco Polo or Speechify"
             setShowBadge(false)
         }
         nm.createNotificationChannel(channel)
@@ -311,21 +340,32 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         const val ACTION_RELEASE_HOLD = "com.lemoyneiv.marcopolobridge.RELEASE_HOLD"
         const val ACTION_ACTIVATE_HOLD = "com.lemoyneiv.marcopolobridge.ACTIVATE_HOLD"
         private const val EXTRA_ACTIVE = "extra_active"
+        private const val EXTRA_APP_NAME = "extra_app_name"
         private const val EXTRA_REASON = "extra_reason"
 
         private var lastSyncedActive: Boolean = false
+        private var lastSyncedAppName: String? = null
         private var lastSyncedReason: String = ""
 
         @Synchronized
-        fun syncWithBridgeState(context: Context, active: Boolean, reason: String) {
+        fun syncWithBridgeState(
+            context: Context,
+            active: Boolean,
+            appName: String?,
+            reason: String
+        ) {
             if (!active && !lastSyncedActive) return
-            if (active && lastSyncedActive && reason == lastSyncedReason) return
+            if (active && lastSyncedActive && appName == lastSyncedAppName && reason == lastSyncedReason) {
+                return
+            }
             lastSyncedActive = active
+            lastSyncedAppName = appName
             lastSyncedReason = reason
 
             val intent = Intent(context, BridgeMediaBrowserService::class.java).apply {
                 action = ACTION_SYNC_STATE
                 putExtra(EXTRA_ACTIVE, active)
+                putExtra(EXTRA_APP_NAME, appName)
                 putExtra(EXTRA_REASON, reason)
             }
             runCatching {
@@ -340,3 +380,4 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         }
     }
 }
+
