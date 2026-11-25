@@ -10,18 +10,18 @@ When connected to Wireless Android Auto on a Pixel phone:
 
 ## How It Works
 
-1. **Detects Marco Polo & Speechify Automatically (Only in the Car)**:
-   - Uses a privacy-minimal `AccessibilityService` (`canRetrieveWindowContent="false"`, `TYPE_WINDOW_STATE_CHANGED` only) combined with Jetpack `CarConnection` (`content://androidx.car.app.connection`) so it **only activates while Android Auto is connected**—doing nothing when you open Marco Polo or Speechify at home.
+1. **Detects Marco Polo & Non-AA Speech Automatically (Only in the Car)**:
+   - Uses a privacy-minimal `AccessibilityService` (`canRetrieveWindowContent="false"`, `TYPE_WINDOW_STATE_CHANGED` only) combined with Jetpack `CarConnection` (`content://androidx.car.app.connection`) so it **only activates while Android Auto is actively projecting**—doing nothing at home and never holding Bluetooth HFP before Wireless Android Auto finishes connecting.
    - Filters out non-Activity floating overlays (such as Speechify's optional floating Voice Keyboard dictation bubble) so typing in other apps never triggers car audio.
-2. **Pauses Android Auto Music & Never Fights App Playback**:
-   - Requests `AudioFocusRequest` (`USAGE_MEDIA`, `AUDIOFOCUS_GAIN_TRANSIENT` by default) and activates an Android Auto `MediaSessionCompat` (`BridgeMediaBrowserService`) so car music pauses immediately.
-   - If Speechify claims media focus itself while in the foreground, the bridge yields media focus cleanly to Speechify without pausing it, while keeping Car Bluetooth routing active.
-3. **Routes Both `STRATEGY_PHONE` & `STRATEGY_ACCESSIBILITY` to Car Speakers**:
-   - Engages `AudioManager.MODE_IN_COMMUNICATION` with a zero-CPU `MODE_STATIC` silent `USAGE_VOICE_COMMUNICATION` primer and selects your car's Bluetooth hands-free device (`AudioDeviceInfo.TYPE_BLUETOOTH_SCO` / `TYPE_BLE_HEADSET`) via `AudioManager.setCommunicationDevice(...)`—routing both Marco Polo (`STRATEGY_PHONE`) and Speechify TTS (`STRATEGY_ACCESSIBILITY` / `STRATEGY_PHONE`) to the car speakers.
-   - Compatible out-of-the-box with `gen5w-suite`'s `FocusGuard` (which permits `STREAM_VOICE_CALL` while blocking stray `MODE_BT_AUDIO` takeovers).
+2. **Respects Native Android Auto Media (`Speechify`) & Pauses Music for `Marco Polo`**:
+   - **Speechify** exposes its own native Android Auto `MediaSession` over `USAGE_MEDIA` (streamed directly over Android Auto Wi-Fi at 48 kHz), so the bridge stays completely out of Speechify's way unless a non-AA speech stream (`USAGE_ASSISTANCE_ACCESSIBILITY` / `USAGE_VOICE_COMMUNICATION`) plays.
+   - When **Marco Polo** opens, requests transient `AudioFocusRequest` (`USAGE_MEDIA`, `AUDIOFOCUS_GAIN_TRANSIENT`) to pause background music cleanly without opening a fake Bluetooth phone call while idle.
+3. **Playback-Scoped `STRATEGY_PHONE` & `STRATEGY_ACCESSIBILITY` Routing**:
+   - Engages `AudioManager.MODE_IN_COMMUNICATION` and selects your car's Bluetooth hands-free device (`AudioDeviceInfo.TYPE_BLUETOOTH_SCO` / `TYPE_BLE_HEADSET`) via `AudioManager.setCommunicationDevice(...)` **strictly while non-AA voice/accessibility audio is actively playing** (plus a `2.5 s` startup settle and `2.5 s` inter-clip grace), then immediately releases HFP SCO so the car head unit never stays stuck in call mode (`Feature is unavailable during a call`).
+   - Compatible out-of-the-box with `gen5w-suite`'s `BtcmFastConnect`, `ParkSession`, and `FocusGuard`.
 4. **Long-Form Background & Screen-Off Continuity**:
-   - Keeps Car Bluetooth routing alive if the Pixel screen locks mid-Polo or mid-article, **and** if you swipe Home or switch to another app while Speechify continues reading aloud in the background (bridging inter-paragraph TTS synthesis gaps).
-   - Releases automatically once playback stops (or immediately if you press Play on Spotify on the Android Auto screen), smoothly resuming your previous Android Auto media.
+   - Keeps Car Bluetooth routing alive if the Pixel screen locks mid-Polo or mid-TTS stream, **and** if you swipe Home or switch to another app while non-AA speech continues playing in the background (bridging inter-paragraph synthesis gaps).
+   - Releases automatically once playback stops (or immediately if you press Play on another Android Auto media app), smoothly resuming your previous Android Auto media.
 
 ## Zero Network / Minimal Permissions
 

@@ -203,9 +203,11 @@ class MainActivity : AppCompatActivity() {
         val btnToggle = findViewById<MaterialButton>(R.id.btnManualToggle)
 
         val active = st.snapshot.shouldHoldBridge
+        val armedManual = st.snapshot.manualHold && !active
         txtHeadline.text = when {
             active -> "● Active — ${st.snapshot.reason}"
-            st.androidAutoConnected -> "● Armed — Android Auto Connected"
+            armedManual -> "◐ Armed — ${st.snapshot.reason}"
+            st.androidAutoConnected -> "● Armed — ${st.snapshot.reason}"
             else -> "○ Standby — ${st.snapshot.reason}"
         }
 
@@ -225,7 +227,7 @@ class MainActivity : AppCompatActivity() {
             append("App Auto-Detect: $a11yLabel")
         }
 
-        btnToggle.text = if (active) "Release Car Audio" else "Hold Car Audio Now"
+        btnToggle.text = if (active || armedManual) "Release Car Audio" else "Hold Car Audio Now"
 
         updatingControlsFromState = true
         findViewById<MaterialSwitch>(R.id.switchAutoDetect).isChecked = st.config.autoDetectEnabled

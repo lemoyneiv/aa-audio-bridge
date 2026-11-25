@@ -76,21 +76,20 @@ class AudioBridgeController private constructor(context: Context) {
                     // User explicitly engaged Manual Hold -> keep holding media focus
                     focusYieldedToApp = null
                     mainHandler.postDelayed({
-                        if (policy.evaluate(now()).manualHold) {
+                        if (policy.evaluate(now()).shouldHoldBridge && policy.evaluate(now()).manualHold) {
                             requestMediaFocus(preferences.config.value)
                         }
                     }, 300L)
                 }
-                snap.foregroundApp != null -> {
-                    // Speechify or Marco Polo is on screen and claimed AUDIOFOCUS_GAIN itself ->
-                    // remember this so subsequent reconcile() calls do NOT steal focus back from it,
-                    // while keeping our Car Bluetooth communication route active.
+                snap.foregroundApp != null && snap.shouldEngageBtCommRoute -> {
+                    // Watched app is actively routing non-AA speech and claimed media focus itself ->
+                    // avoid stealing focus back from it while keeping Car Bluetooth routing active.
                     focusYieldedToApp = snap.foregroundApp
-                    Log.i(TAG, "${snap.foregroundApp.displayName} claimed media focus in foreground")
+                    Log.i(TAG, "${snap.foregroundApp.displayName} claimed media focus during active voice bridge")
                 }
                 else -> {
-                    // Bridge was only holding for background continuation and user started another
-                    // media app (e.g. tapped Play on Spotify on Android Auto) -> yield cleanly!
+                    // Bridge was only holding idle or in background and user started an Android Auto
+                    // media app (e.g. tapped Play on Speechify or Spotify on the car screen) -> yield!
                     focusYieldedToApp = null
                     policy.onMediaAudioFocusLost(now())
                     reconcile()
@@ -358,25 +357,26 @@ class AudioBridgeController private constructor(context: Context) {
         }
     }
 
+    /**
+     * Detects active audio streams that Wireless Android Auto does NOT capture over Wi-Fi:
+     * `USAGE_VOICE_COMMUNICATION` (`STRATEGY_PHONE`, Marco Polo) and
+     * `USAGE_ASSISTANCE_ACCESSIBILITY` (`STRATEGY_ACCESSIBILITY`, screen/accessibility TTS).
+     *
+     * `USAGE_MEDIA` (Speechify's Android Auto player, Spotify, etc.) and `USAGE_ASSISTANT`
+     * (Google Assistant) are already routed natively over Android Auto Wi-Fi, and opening
+     * Bluetooth HFP SCO (`call = 1`) would mute and pause them on the car head unit.
+     */
     private fun hasExternalRelevantPlayback(configs: List<AudioPlaybackConfiguration>): Boolean {
-        var speechOrCommCount = 0
-        var mediaCount = 0
         for (cfg in configs) {
             val attrs = cfg.audioAttributes
             if (SilentTrackPlayer.isOwnSilentTrack(attrs)) continue
             when (attrs.usage) {
                 AudioAttributes.USAGE_VOICE_COMMUNICATION,
                 AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING,
-                AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY,
-                AudioAttributes.USAGE_ASSISTANT -> speechOrCommCount++
-                AudioAttributes.USAGE_MEDIA,
-                AudioAttributes.USAGE_UNKNOWN -> mediaCount++
+                AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY -> return true
             }
         }
-        if (speechOrCommCount > 0) return true
-        val snap = policy.evaluate(now())
-        val watchingMediaForTarget = snap.targetAppForeground || snap.backgroundLatchedApp != null
-        return watchingMediaForTarget && mediaCount > 0
+        return false
     }
 
     private fun resolveTargetBtDevice(): Pair<CommDeviceCandidate, AudioDeviceInfo>? {

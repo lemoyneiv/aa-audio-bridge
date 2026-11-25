@@ -3,12 +3,19 @@ package com.lemoyneiv.marcopolobridge.core
 enum class WatchedApp(
     val displayName: String,
     val primaryPackage: String,
-    val packageNames: Set<String>
+    val packageNames: Set<String>,
+    /**
+     * True when the app exposes its own native Android Auto MediaSession / USAGE_MEDIA playback
+     * (e.g. Speechify's AA player), so Car Audio Bridge must stay passive unless a non-AA
+     * voice/accessibility stream (USAGE_VOICE_COMMUNICATION / USAGE_ASSISTANCE_ACCESSIBILITY) plays.
+     */
+    val usesNativeAaMedia: Boolean
 ) {
     MARCO_POLO(
         displayName = "Marco Polo",
         primaryPackage = "co.happybits.marcopolo",
-        packageNames = setOf("co.happybits.marcopolo")
+        packageNames = setOf("co.happybits.marcopolo"),
+        usesNativeAaMedia = false
     ),
     SPEECHIFY(
         displayName = "Speechify",
@@ -16,7 +23,8 @@ enum class WatchedApp(
         packageNames = setOf(
             "com.cliffweitzman.speechify2",
             "com.cliffweitzman.speechify"
-        )
+        ),
+        usesNativeAaMedia = true
     );
 
     companion object {
@@ -31,7 +39,7 @@ enum class WatchedApp(
 enum class RoutingMode {
     /**
      * Pauses Android Auto media (holding AA MediaSession + AudioFocus) AND routes
-     * Marco Polo / Speechify speech streams from the phone speaker to Car Bluetooth (HFP/BLE).
+     * Marco Polo / non-AA speech streams from the phone speaker to Car Bluetooth (HFP/BLE).
      */
     SMART_AUTO,
 
@@ -43,10 +51,10 @@ enum class RoutingMode {
 }
 
 enum class ScoTiming {
-    /** Opens car Bluetooth route as soon as a watched app enters the foreground. */
+    /** Opens car Bluetooth route as soon as Marco Polo enters the foreground. */
     ON_FOREGROUND,
 
-    /** Opens car Bluetooth route only when active audio playback is detected. */
+    /** Opens car Bluetooth route only while non-AA voice/TTS audio is actively playing. */
     ON_AUDIO_PLAYBACK
 }
 
@@ -57,11 +65,12 @@ data class BridgeConfig(
     val keepPlayingInBackground: Boolean = true,
     val onlyWhenAndroidAutoConnected: Boolean = true,
     val routingMode: RoutingMode = RoutingMode.SMART_AUTO,
-    val scoTiming: ScoTiming = ScoTiming.ON_FOREGROUND,
+    val scoTiming: ScoTiming = ScoTiming.ON_AUDIO_PLAYBACK,
     val resumeMediaOnExit: Boolean = true,
     val preferredBtIdentifier: String = "",
     val exitGraceMs: Long = 2_000L,
-    val playbackGapGraceMs: Long = 3_000L
+    val playbackGapGraceMs: Long = 2_500L,
+    val aaConnectSettleMs: Long = 2_500L
 ) {
     fun isAppEnabled(app: WatchedApp): Boolean = when (app) {
         WatchedApp.MARCO_POLO -> enableMarcoPolo

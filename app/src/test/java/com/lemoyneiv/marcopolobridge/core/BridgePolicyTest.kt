@@ -25,45 +25,117 @@ class BridgePolicyTest {
     }
 
     @Test
-    fun `activates bridge and BT route for both Marco Polo and Speechify during Wireless Android Auto`() {
+    fun `Speechify stays passive for native Android Auto media and bridges only non-AA speech streams`() {
         val policy = BridgePolicy()
         policy.onAndroidAutoConnectionChanged(true, 1_000L)
 
-        val mpSnap = policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 2_000L)
-        assertTrue(mpSnap.shouldHoldBridge)
-        assertTrue(mpSnap.shouldEngageBtCommRoute)
-        assertEquals(WatchedApp.MARCO_POLO, mpSnap.activeApp)
+        // Opening Speechify while it uses native Android Auto USAGE_MEDIA must NOT steal focus
+        // or open Bluetooth HFP SCO (which would pause Speechify and show "unavailable during a call").
+        val spOpen = policy.onForegroundPackageChanged(BridgePolicy.PKG_SPEECHIFY, 5_000L)
+        assertFalse(spOpen.shouldHoldBridge)
+        assertFalse(spOpen.shouldEngageBtCommRoute)
+        assertEquals(WatchedApp.SPEECHIFY, spOpen.foregroundApp)
+        assertEquals("Speechify playing natively via Android Auto", spOpen.reason)
 
-        val spSnap = policy.onForegroundPackageChanged(BridgePolicy.PKG_SPEECHIFY, 3_000L)
-        assertTrue(spSnap.shouldHoldBridge)
-        assertTrue(spSnap.shouldEngageBtCommRoute)
-        assertEquals(WatchedApp.SPEECHIFY, spSnap.activeApp)
-        assertEquals("Speechify active", spSnap.reason)
+        // If a non-AA speech/accessibility stream starts (USAGE_ASSISTANCE_ACCESSIBILITY), bridge engages
+        val spSpeech = policy.onExternalAudioActiveChanged(true, 6_000L)
+        assertTrue(spSpeech.shouldHoldBridge)
+        assertTrue(spSpeech.shouldEngageBtCommRoute)
+        assertEquals(WatchedApp.SPEECHIFY, spSpeech.activeApp)
+
+        // When non-AA speech ends, holds briefly across paragraph gap then releases completely
+        val gap = policy.onExternalAudioActiveChanged(false, 10_000L)
+        assertTrue(gap.shouldHoldBridge)
+        assertTrue(gap.shouldEngageBtCommRoute)
+        assertTrue(gap.graceRemainingMs > 0L)
+
+        val released = policy.evaluate(12_600L)
+        assertFalse(released.shouldHoldBridge)
+        assertFalse(released.shouldEngageBtCommRoute)
     }
 
     @Test
-    fun `ignores keyboard and systemui overlays while Marco Polo or Speechify is open`() {
+    fun `Marco Polo pauses AA music on open without fake call and engages BT HFP only while voice clip plays`() {
         val policy = BridgePolicy()
         policy.onAndroidAutoConnectionChanged(true, 1_000L)
-        policy.onForegroundPackageChanged(BridgePolicy.PKG_SPEECHIFY, 2_000L)
+
+        // After 2.5s AA startup settle, opening Marco Polo holds AA media focus WITHOUT opening BT HFP SCO
+        val mpOpen = policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 4_000L)
+        assertTrue(mpOpen.shouldHoldBridge)
+        assertFalse(mpOpen.shouldEngageBtCommRoute)
+        assertTrue(mpOpen.shouldPlaySilentMediaKeepalive)
+        assertEquals(WatchedApp.MARCO_POLO, mpOpen.activeApp)
+
+        // Video message starts playing (USAGE_VOICE_COMMUNICATION) -> engages BT HFP SCO immediately
+        val playing = policy.onExternalAudioActiveChanged(true, 5_000L)
+        assertTrue(playing.shouldHoldBridge)
+        assertTrue(playing.shouldEngageBtCommRoute)
+        assertFalse(playing.shouldPlaySilentMediaKeepalive)
+
+        // Video message finishes while Marco Polo stays on screen -> holds SCO for 2.5s gap grace,
+        // then releases BT HFP SCO so the car exits call mode even with Marco Polo still open!
+        val clipEnded = policy.onExternalAudioActiveChanged(false, 15_000L)
+        assertTrue(clipEnded.shouldHoldBridge)
+        assertTrue(clipEnded.shouldEngageBtCommRoute)
+        assertEquals(2_500L, clipEnded.graceRemainingMs)
+
+        val afterScoGrace = policy.evaluate(17_600L)
+        assertTrue(afterScoGrace.shouldHoldBridge)
+        assertFalse(afterScoGrace.shouldEngageBtCommRoute)
+        assertTrue(afterScoGrace.shouldPlaySilentMediaKeepalive)
+    }
+
+    @Test
+    fun `enforces AA startup settle window and clears manual hold on AA disconnect so car reconnect is never blocked`() {
+        val policy = BridgePolicy()
+
+        // Tapping Manual Hold before AA connects arms without engaging HFP SCO (so AA handshake isn't blocked)
+        val armedBeforeAa = policy.setManualHold(true, 500L)
+        assertFalse(armedBeforeAa.shouldHoldBridge)
+        assertFalse(armedBeforeAa.shouldEngageBtCommRoute)
+        assertTrue(armedBeforeAa.manualHold)
+
+        // AA connects at t=1000ms -> holds media focus, but waits 2500ms settle before opening HFP SCO
+        val justConnected = policy.onAndroidAutoConnectionChanged(true, 1_000L)
+        assertTrue(justConnected.shouldHoldBridge)
+        assertFalse(justConnected.shouldEngageBtCommRoute)
+        assertEquals(2_500L, justConnected.graceRemainingMs)
+
+        // At t=3500ms settle completes -> HFP SCO engages cleanly after FocusGuard startup reclaim
+        val settled = policy.evaluate(3_500L)
+        assertTrue(settled.shouldHoldBridge)
+        assertTrue(settled.shouldEngageBtCommRoute)
+
+        // Drive ends (AA disconnects) -> clears Manual Hold so next drive never starts in a fake call!
+        val disconnected = policy.onAndroidAutoConnectionChanged(false, 60_000L)
+        assertFalse(disconnected.shouldHoldBridge)
+        assertFalse(disconnected.shouldEngageBtCommRoute)
+        assertFalse(disconnected.manualHold)
+    }
+
+    @Test
+    fun `ignores keyboard and systemui overlays while Marco Polo is open`() {
+        val policy = BridgePolicy()
+        policy.onAndroidAutoConnectionChanged(true, 1_000L)
+        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 4_000L)
 
         val keyboardSnap = policy.onForegroundPackageChanged(
             "com.google.android.inputmethod.latin",
-            2_500L
+            4_500L
         )
         assertTrue(keyboardSnap.shouldHoldBridge)
-        assertEquals(WatchedApp.SPEECHIFY, keyboardSnap.foregroundApp)
+        assertEquals(WatchedApp.MARCO_POLO, keyboardSnap.foregroundApp)
 
-        val shadeSnap = policy.onForegroundPackageChanged("com.android.systemui", 3_000L)
+        val shadeSnap = policy.onForegroundPackageChanged("com.android.systemui", 5_000L)
         assertTrue(shadeSnap.shouldHoldBridge)
-        assertEquals(WatchedApp.SPEECHIFY, shadeSnap.foregroundApp)
+        assertEquals(WatchedApp.MARCO_POLO, shadeSnap.foregroundApp)
     }
 
     @Test
-    fun `holds through exit grace then releases cleanly when leaving watched app with no audio playing`() {
+    fun `holds through exit grace then releases cleanly when leaving Marco Polo with no audio playing`() {
         val policy = BridgePolicy()
         policy.onAndroidAutoConnectionChanged(true, 1_000L)
-        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 2_000L)
+        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 4_000L)
 
         val leaveSnap = policy.onForegroundPackageChanged(
             "com.google.android.apps.nexuslauncher",
@@ -81,11 +153,11 @@ class BridgePolicyTest {
     }
 
     @Test
-    fun `keeps playing long Polo or Speechify chapter if screen locks mid-playback and bridges paragraph gaps`() {
+    fun `keeps playing long Polo or non-AA TTS stream if screen locks mid-playback and bridges paragraph gaps`() {
         val policy = BridgePolicy()
         policy.onAndroidAutoConnectionChanged(true, 1_000L)
-        policy.onForegroundPackageChanged(BridgePolicy.PKG_SPEECHIFY, 2_000L)
-        policy.onExternalAudioActiveChanged(true, 2_500L)
+        policy.onForegroundPackageChanged(BridgePolicy.PKG_SPEECHIFY, 4_000L)
+        policy.onExternalAudioActiveChanged(true, 4_500L)
 
         val screenOffSnap = policy.onScreenInteractiveChanged(false, 10_000L)
         assertTrue(screenOffSnap.shouldHoldBridge)
@@ -94,29 +166,32 @@ class BridgePolicyTest {
         // Brief 1.2s synthesis gap between paragraphs while screen is off -> stays seamlessly open!
         val gapStart = policy.onExternalAudioActiveChanged(false, 30_000L)
         assertTrue(gapStart.shouldHoldBridge)
+        assertTrue(gapStart.shouldEngageBtCommRoute)
         assertTrue(gapStart.inExitGrace)
 
         val nextParagraph = policy.onExternalAudioActiveChanged(true, 31_200L)
         assertTrue(nextParagraph.shouldHoldBridge)
+        assertTrue(nextParagraph.shouldEngageBtCommRoute)
         assertFalse(nextParagraph.inExitGrace)
 
         // Still playing 5 minutes later with screen off
         assertTrue(policy.evaluate(330_000L).shouldHoldBridge)
 
-        // Article ends -> enters 3s playback gap grace, then releases
+        // Stream ends -> enters 2.5s playback gap grace, then releases completely
         val endSnap = policy.onExternalAudioActiveChanged(false, 345_000L)
         assertTrue(endSnap.shouldHoldBridge)
-        assertFalse(policy.evaluate(348_500L).shouldHoldBridge)
+        assertFalse(policy.evaluate(347_600L).shouldHoldBridge)
+        assertFalse(policy.evaluate(347_600L).shouldEngageBtCommRoute)
     }
 
     @Test
-    fun `latches Speechify in background when swiping Home mid-article and releases on pause or AA play`() {
+    fun `latches non-AA speech in background when swiping Home and yields if user starts AA media`() {
         val policy = BridgePolicy()
         policy.onAndroidAutoConnectionChanged(true, 1_000L)
-        policy.onForegroundPackageChanged(BridgePolicy.PKG_SPEECHIFY, 2_000L)
-        policy.onExternalAudioActiveChanged(true, 2_500L)
+        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 4_000L)
+        policy.onExternalAudioActiveChanged(true, 4_500L)
 
-        // User swipes Home while Speechify keeps reading aloud in background
+        // User swipes Home while Polo keeps playing in background
         val homeSnap = policy.onForegroundPackageChanged(
             "com.google.android.apps.nexuslauncher",
             5_000L
@@ -124,16 +199,32 @@ class BridgePolicyTest {
         assertTrue(homeSnap.shouldHoldBridge)
         assertTrue(homeSnap.shouldEngageBtCommRoute)
         assertNull(homeSnap.foregroundApp)
-        assertEquals(WatchedApp.SPEECHIFY, homeSnap.backgroundLatchedApp)
-        assertEquals(WatchedApp.SPEECHIFY, homeSnap.activeApp)
+        assertEquals(WatchedApp.MARCO_POLO, homeSnap.backgroundLatchedApp)
+        assertEquals(WatchedApp.MARCO_POLO, homeSnap.activeApp)
 
-        // Still reading 2 minutes later on home screen
-        assertTrue(policy.evaluate(125_000L).shouldHoldBridge)
-
-        // If user taps Play on Spotify on Android Auto screen -> yields background latch immediately!
-        val yielded = policy.onMediaAudioFocusLost(130_000L)
+        // If user taps Play on Speechify/Spotify on Android Auto screen -> yields background latch!
+        val yielded = policy.onMediaAudioFocusLost(10_000L)
         assertFalse(yielded.shouldHoldBridge)
+        assertFalse(yielded.shouldEngageBtCommRoute)
         assertNull(yielded.backgroundLatchedApp)
+    }
+
+    @Test
+    fun `yields idle Marco Polo foreground hold if user starts AA media, then re-engages when Polo plays`() {
+        val policy = BridgePolicy()
+        policy.onAndroidAutoConnectionChanged(true, 1_000L)
+        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 4_000L)
+        assertTrue(policy.evaluate(4_100L).shouldHoldBridge)
+
+        // User taps Play on Spotify/Speechify on Android Auto while Marco Polo sits idle on phone
+        val yielded = policy.onMediaAudioFocusLost(5_000L)
+        assertFalse(yielded.shouldHoldBridge)
+        assertFalse(yielded.shouldEngageBtCommRoute)
+
+        // User then taps a Marco Polo video message -> re-engages automatically!
+        val playing = policy.onExternalAudioActiveChanged(true, 8_000L)
+        assertTrue(playing.shouldHoldBridge)
+        assertTrue(playing.shouldEngageBtCommRoute)
     }
 
     @Test
@@ -142,11 +233,11 @@ class BridgePolicyTest {
         policy.onAndroidAutoConnectionChanged(true, 1_000L)
         policy.updateConfig(BridgeConfig(enableSpeechify = false, enableMarcoPolo = true), 1_200L)
 
-        val speechifySnap = policy.onForegroundPackageChanged(BridgePolicy.PKG_SPEECHIFY, 2_000L)
+        val speechifySnap = policy.onForegroundPackageChanged(BridgePolicy.PKG_SPEECHIFY, 4_000L)
         assertFalse(speechifySnap.shouldHoldBridge)
         assertEquals(WatchedApp.SPEECHIFY, speechifySnap.foregroundApp)
 
-        val marcoSnap = policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 3_000L)
+        val marcoSnap = policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 5_000L)
         assertTrue(marcoSnap.shouldHoldBridge)
         assertEquals(WatchedApp.MARCO_POLO, marcoSnap.activeApp)
     }
@@ -155,16 +246,16 @@ class BridgePolicyTest {
     fun `manual release suppresses auto-hold only for current foreground visit`() {
         val policy = BridgePolicy()
         policy.onAndroidAutoConnectionChanged(true, 1_000L)
-        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 2_000L)
-        assertTrue(policy.evaluate(2_100L).shouldHoldBridge)
+        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 4_000L)
+        assertTrue(policy.evaluate(4_100L).shouldHoldBridge)
 
         // User taps "Release / Resume AA" while Marco Polo is still open
-        val released = policy.setManualHold(false, 3_000L)
+        val released = policy.setManualHold(false, 5_000L)
         assertFalse(released.shouldHoldBridge)
 
         // Leaves Marco Polo and reopens it later -> auto-hold works again
-        policy.onForegroundPackageChanged("com.google.android.apps.nexuslauncher", 4_000L)
-        val reopened = policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 8_000L)
+        policy.onForegroundPackageChanged("com.google.android.apps.nexuslauncher", 6_000L)
+        val reopened = policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 9_000L)
         assertTrue(reopened.shouldHoldBridge)
     }
 
@@ -172,14 +263,15 @@ class BridgePolicyTest {
     fun `yields immediately to cellular phone call and resumes afterward`() {
         val policy = BridgePolicy()
         policy.onAndroidAutoConnectionChanged(true, 1_000L)
-        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 2_000L)
+        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 4_000L)
+        policy.onExternalAudioActiveChanged(true, 4_500L)
 
-        val ringing = policy.onAudioModeChanged(BridgePolicy.AUDIO_MODE_RINGTONE, 3_000L)
+        val ringing = policy.onAudioModeChanged(BridgePolicy.AUDIO_MODE_RINGTONE, 5_000L)
         assertFalse(ringing.shouldHoldBridge)
         assertFalse(ringing.shouldEngageBtCommRoute)
         assertTrue(ringing.yieldingToPhoneCall)
 
-        val inCall = policy.onAudioModeChanged(BridgePolicy.AUDIO_MODE_IN_CALL, 5_000L)
+        val inCall = policy.onAudioModeChanged(BridgePolicy.AUDIO_MODE_IN_CALL, 7_000L)
         assertFalse(inCall.shouldHoldBridge)
 
         val callEnded = policy.onAudioModeChanged(BridgePolicy.AUDIO_MODE_NORMAL, 20_000L)
@@ -225,7 +317,8 @@ class BridgePolicyTest {
     fun `reasserts BT route against speakerphone override with debounce and rate-limit backoff`() {
         val policy = BridgePolicy()
         policy.onAndroidAutoConnectionChanged(true, 1_000L)
-        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 2_000L)
+        policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 4_000L)
+        policy.onExternalAudioActiveChanged(true, 4_050L)
 
         val ioniq = CommDeviceCandidate(
             id = 25,
@@ -234,46 +327,42 @@ class BridgePolicyTest {
         )
 
         // Already routed to Ioniq 5 -> no reassertion needed
-        assertFalse(policy.shouldReassertBtRoute(25, ioniq, 2_100L))
+        assertFalse(policy.shouldReassertBtRoute(25, ioniq, 4_100L))
 
         // App switches to built-in speaker (id = 2) -> reassert!
-        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 2_200L))
+        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 4_200L))
         // Duplicate callback 30 ms later is debounced
-        assertFalse(policy.shouldReassertBtRoute(2, ioniq, 2_230L))
+        assertFalse(policy.shouldReassertBtRoute(2, ioniq, 4_230L))
 
         // Up to MAX_REASSERTIONS_IN_WINDOW (5 total) allowed, then backs off cleanly
-        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 2_500L))
-        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 2_800L))
-        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 3_100L))
-        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 3_400L))
-        assertFalse(policy.shouldReassertBtRoute(2, ioniq, 3_700L))
+        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 4_500L))
+        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 4_800L))
+        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 5_100L))
+        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 5_400L))
+        assertFalse(policy.shouldReassertBtRoute(2, ioniq, 5_700L))
 
         // Starting a new clip resets backoff
-        policy.onExternalAudioActiveChanged(true, 9_000L)
-        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 9_200L))
+        policy.onExternalAudioActiveChanged(false, 8_000L)
+        policy.onExternalAudioActiveChanged(true, 11_000L)
+        assertTrue(policy.shouldReassertBtRoute(2, ioniq, 11_200L))
     }
 
     @Test
-    fun `ON_AUDIO_PLAYBACK timing uses silent media keepalive until audio starts playing`() {
+    fun `ON_FOREGROUND timing opens BT route immediately for Marco Polo after AA settle`() {
         val policy = BridgePolicy()
         policy.updateConfig(
             BridgeConfig(
                 routingMode = RoutingMode.SMART_AUTO,
-                scoTiming = ScoTiming.ON_AUDIO_PLAYBACK
+                scoTiming = ScoTiming.ON_FOREGROUND
             ),
             500L
         )
         policy.onAndroidAutoConnectionChanged(true, 1_000L)
 
-        val opened = policy.onForegroundPackageChanged(BridgePolicy.PKG_SPEECHIFY, 2_000L)
+        val opened = policy.onForegroundPackageChanged(BridgePolicy.PKG_MARCO_POLO, 4_000L)
         assertTrue(opened.shouldHoldBridge)
-        assertFalse(opened.shouldEngageBtCommRoute)
-        assertTrue(opened.shouldPlaySilentMediaKeepalive)
-
-        val playing = policy.onExternalAudioActiveChanged(true, 3_000L)
-        assertTrue(playing.shouldHoldBridge)
-        assertTrue(playing.shouldEngageBtCommRoute)
-        assertFalse(playing.shouldPlaySilentMediaKeepalive)
+        assertTrue(opened.shouldEngageBtCommRoute)
+        assertFalse(opened.shouldPlaySilentMediaKeepalive)
     }
 }
 

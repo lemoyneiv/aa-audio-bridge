@@ -12,8 +12,8 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Monitors live Android Auto (Wired or Wireless) projection status using Jetpack's
- * [CarConnection] ContentProvider (`content://androidx.car.app.connection`) combined
- * with active Android Auto MediaBrowser binding signals.
+ * authoritative [CarConnection] ContentProvider (`content://androidx.car.app.connection`),
+ * which Gearhead updates immediately on session start and teardown.
  */
 class CarProjectionMonitor(
     context: Context,
@@ -23,17 +23,18 @@ class CarProjectionMonitor(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var carConnection: CarConnection? = null
-    private var projectionReportedByProvider: Boolean = false
-    private var mediaBrowserBoundByCar: Boolean = false
 
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
     private val observer = Observer<Int> { connectionState ->
-        projectionReportedByProvider =
+        val connected =
             (connectionState == CarConnection.CONNECTION_TYPE_PROJECTION ||
                 connectionState == CarConnection.CONNECTION_TYPE_NATIVE)
-        publishCombinedState()
+        if (_isConnected.value != connected) {
+            _isConnected.value = connected
+            onConnectionChanged(connected)
+        }
     }
 
     fun start() {
@@ -46,23 +47,6 @@ class CarProjectionMonitor(
             }.onFailure { e ->
                 Log.w(TAG, "Unable to observe CarConnection provider", e)
             }
-        }
-    }
-
-    fun setMediaBrowserCarBound(bound: Boolean) {
-        mainHandler.post {
-            if (mediaBrowserBoundByCar != bound) {
-                mediaBrowserBoundByCar = bound
-                publishCombinedState()
-            }
-        }
-    }
-
-    private fun publishCombinedState() {
-        val combined = projectionReportedByProvider || mediaBrowserBoundByCar
-        if (_isConnected.value != combined) {
-            _isConnected.value = combined
-            onConnectionChanged(combined)
         }
     }
 

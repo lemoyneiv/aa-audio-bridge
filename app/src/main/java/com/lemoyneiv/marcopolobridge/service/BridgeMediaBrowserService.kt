@@ -92,7 +92,7 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         mediaSession = MediaSessionCompat(this, "MarcoPoloBridgeSession").apply {
             setSessionActivity(launchIntent)
             setCallback(sessionCallback)
-            isActive = true
+            isActive = false
         }
         sessionToken = mediaSession.sessionToken
 
@@ -120,7 +120,7 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
                 applyForegroundAndSession(active, appName, reason)
             }
         }
-        return START_STICKY
+        return if (inForeground) START_STICKY else START_NOT_STICKY
     }
 
     private fun applyForegroundAndSession(active: Boolean, appName: String?, reason: String) {
@@ -151,6 +151,7 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
     }
 
     private fun updateMediaSession(active: Boolean, appName: String?, subtitle: String) {
+        mediaSession.isActive = active
         val playbackState = PlaybackStateCompat.Builder()
             .setActions(
                 PlaybackStateCompat.ACTION_PLAY or
@@ -193,11 +194,6 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
         clientUid: Int,
         rootHints: Bundle?
     ): BrowserRoot {
-        if (clientPackageName == "com.google.android.projection.gearhead" ||
-            clientPackageName.contains("car", ignoreCase = true)
-        ) {
-            controller.projectionMonitor.setMediaBrowserCarBound(true)
-        }
         return BrowserRoot(ROOT_ID, null)
     }
 
@@ -319,7 +315,6 @@ class BridgeMediaBrowserService : MediaBrowserServiceCompat() {
     }
 
     override fun onDestroy() {
-        controller.projectionMonitor.setMediaBrowserCarBound(false)
         mediaSession.isActive = false
         mediaSession.release()
         super.onDestroy()

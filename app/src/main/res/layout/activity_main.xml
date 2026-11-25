@@ -335,16 +335,16 @@
                     android:layout_marginTop="4dp">
 
                     <RadioButton
-                        android:id="@+id/rbTimingForeground"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Immediately when app opens (No clipped start)" />
-
-                    <RadioButton
                         android:id="@+id/rbTimingPlayback"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Only while audio is actively playing" />
+                        android:text="Only while voice/TTS audio is playing (Recommended)" />
+
+                    <RadioButton
+                        android:id="@+id/rbTimingForeground"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Immediately when Marco Polo opens" />
                 </RadioGroup>
 
                 <TextView

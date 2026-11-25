@@ -160,9 +160,15 @@ class SilentTrackPlayer {
     companion object {
         private const val TAG = "SilentTrackPlayer"
 
+        /**
+         * Note: AOSP `PlaybackActivityMonitor.anonymizeForPublicConsumption()` masks `mFlags`
+         * to `AudioAttributes.FLAG_PUBLIC` for non-system apps, stripping `ALLOW_CAPTURE_BY_NONE`
+         * while preserving `usage` and `contentType`. Matching `CONTENT_TYPE_SONIFICATION`
+         * prevents our own `voicePrimerTrack` / `mediaKeepaliveTrack` (and UI click sounds)
+         * from ever creating a self-sustaining playback feedback loop.
+         */
         fun isOwnSilentTrack(attrs: AudioAttributes): Boolean {
             return attrs.contentType == AudioAttributes.CONTENT_TYPE_SONIFICATION &&
-                attrs.allowedCapturePolicy == AudioAttributes.ALLOW_CAPTURE_BY_NONE &&
                 (attrs.usage == AudioAttributes.USAGE_VOICE_COMMUNICATION ||
                     attrs.usage == AudioAttributes.USAGE_MEDIA)
         }

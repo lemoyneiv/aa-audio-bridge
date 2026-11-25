@@ -18,7 +18,18 @@ class BridgePreferences(context: Context) {
     }
 
     init {
+        migrateLegacyDefaultsIfNeeded()
+        _config.value = readConfig()
         prefs.registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    private fun migrateLegacyDefaultsIfNeeded() {
+        if (!prefs.getBoolean(KEY_MIGRATED_SCO_PLAYBACK_V2, false)) {
+            prefs.edit()
+                .putString(KEY_SCO_TIMING, ScoTiming.ON_AUDIO_PLAYBACK.name)
+                .putBoolean(KEY_MIGRATED_SCO_PLAYBACK_V2, true)
+                .apply()
+        }
     }
 
     private fun readConfig(): BridgeConfig {
@@ -26,9 +37,9 @@ class BridgePreferences(context: Context) {
         val routingMode = runCatching { RoutingMode.valueOf(modeName ?: "") }
             .getOrDefault(RoutingMode.SMART_AUTO)
 
-        val timingName = prefs.getString(KEY_SCO_TIMING, ScoTiming.ON_FOREGROUND.name)
+        val timingName = prefs.getString(KEY_SCO_TIMING, ScoTiming.ON_AUDIO_PLAYBACK.name)
         val scoTiming = runCatching { ScoTiming.valueOf(timingName ?: "") }
-            .getOrDefault(ScoTiming.ON_FOREGROUND)
+            .getOrDefault(ScoTiming.ON_AUDIO_PLAYBACK)
 
         return BridgeConfig(
             autoDetectEnabled = prefs.getBoolean(KEY_AUTO_DETECT, true),
@@ -92,6 +103,7 @@ class BridgePreferences(context: Context) {
         private const val KEY_RESUME_ON_EXIT = "resume_media_on_exit"
         private const val KEY_PREFERRED_BT = "preferred_bt_identifier"
         private const val KEY_EXIT_GRACE_MS = "exit_grace_ms"
+        private const val KEY_MIGRATED_SCO_PLAYBACK_V2 = "migrated_sco_playback_v2"
     }
 }
 

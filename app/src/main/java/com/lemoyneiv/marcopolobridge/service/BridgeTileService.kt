@@ -28,12 +28,14 @@ class BridgeTileService : TileService() {
         val tile = qsTile ?: return
         val st = AudioBridgeController.getInstance(this).status.value
         val active = st.snapshot.shouldHoldBridge
+        val armedManual = st.snapshot.manualHold && !active
         val appName = st.snapshot.activeApp?.displayName
-        tile.state = if (active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        tile.state = if (active || armedManual) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.label = "Car Audio Bridge"
         tile.subtitle = when {
             active && !appName.isNullOrBlank() -> "$appName Active"
             active -> "Car Audio Active"
+            armedManual -> "Waiting for Android Auto"
             else -> "Tap to Hold"
         }
         tile.updateTile()
